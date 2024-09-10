@@ -13,27 +13,31 @@ const color = .{
     .background = utils.colorFromInt(0x000000ff),
     .primary = utils.colorFromInt(0x181e2aff),
     .secondary = utils.colorFromInt(0xffffffff),
+    .player1 = delve.colors.cyan,
+    .player2 = delve.colors.pink,
 };
 
 var time: f32 = 0.0;
-const width = 800;
-const height = 600;
-const player_speed: f32 = 5;
-const player_paddle_height = 100;
+const width = 1024;
+const height = 768;
+const paddle_speed: f32 = 7.5;
+const player_paddle_height = 150;
+const player_paddle_width = 20;
+const wall_size = 50;
 
 var shader_default: graphics.Shader = undefined;
 const texture_region_default = delve.graphics.sprites.TextureRegion.default();
 var sprite_batch: delve.graphics.batcher.SpriteBatcher = undefined;
 
-var player1_paddle = spatial.Rect.fromSize(math.Vec2.new(10, player_paddle_height))
-    .setPosition(.{ .x = 10, .y = height / 2 - player_paddle_height / 2 });
-var player2_paddle = spatial.Rect.fromSize(math.Vec2.new(10, player_paddle_height))
-    .setPosition(.{ .x = width - 10 - 10, .y = height / 2 - player_paddle_height / 2 });
-const map = &[_]spatial.Rect{
-    spatial.Rect.fromSize(math.Vec2.new(width, 10)).setPosition(.{ .x = 0, .y = 0 }),
-    spatial.Rect.fromSize(math.Vec2.new(width, 10)).setPosition(.{ .x = 0, .y = height - 10 }),
-    spatial.Rect.fromSize(math.Vec2.new(10, height)).setPosition(.{ .x = 0, .y = 0 }),
-    spatial.Rect.fromSize(math.Vec2.new(10, height)).setPosition(.{ .x = width - 10, .y = 0 }),
+var player1_paddle = spatial.Rect.fromSize(math.Vec2.new(player_paddle_width, player_paddle_height))
+    .setPosition(.{ .x = wall_size, .y = height / 2 - player_paddle_height / 2 });
+var player2_paddle = spatial.Rect.fromSize(math.Vec2.new(player_paddle_width, player_paddle_height))
+    .setPosition(.{ .x = width - wall_size - player_paddle_width, .y = height / 2 - player_paddle_height / 2 });
+const arena = &[_]spatial.Rect{
+    spatial.Rect.fromSize(math.Vec2.new(width, wall_size)).setPosition(.{ .x = 0, .y = 0 }),
+    spatial.Rect.fromSize(math.Vec2.new(width, wall_size)).setPosition(.{ .x = 0, .y = height - wall_size }),
+    spatial.Rect.fromSize(math.Vec2.new(wall_size, height)).setPosition(.{ .x = 0, .y = 0 }),
+    spatial.Rect.fromSize(math.Vec2.new(wall_size, height)).setPosition(.{ .x = width - wall_size, .y = 0 }),
 };
 
 pub fn main() !void {
@@ -81,32 +85,32 @@ pub fn tick(delta: f32) void {
     }
 
     if (input.isKeyPressed(.J)) {
-        player1_paddle.y += player_speed;
+        player1_paddle.y += paddle_speed;
     }
     if (input.isKeyPressed(.K)) {
-        player1_paddle.y -= player_speed;
+        player1_paddle.y -= paddle_speed;
+    }
+    if (input.isKeyPressed(.SPACE)) {
+        // TODO: Spawn ball.
     }
 }
 
 pub fn draw() void {
-    // clear the batch for this frame
     sprite_batch.reset();
 
-    // make sure we are using the right shader and texture
     sprite_batch.useShader(shader_default);
     sprite_batch.useTexture(graphics.tex_white);
 
-    // add our rectangles
-    sprite_batch.addRectangle(player1_paddle, texture_region_default, delve.colors.cyan);
-    sprite_batch.addRectangle(player2_paddle, texture_region_default, delve.colors.pink);
-    for (map) |entity| {
+    // Add entities to be rendered.
+    for (arena) |entity| {
         sprite_batch.addRectangle(entity, texture_region_default, color.primary);
     }
+    sprite_batch.addRectangle(player1_paddle, texture_region_default, color.player1);
+    sprite_batch.addRectangle(player2_paddle, texture_region_default, color.player2);
 
-    // apply the batch to make it ready to draw
     sprite_batch.apply();
 
-    // setup our view to draw with
+    // Setup view and projection.
     const view = math.Mat4.lookat(
         .{ .x = 0, .y = 0, .z = 1 },
         math.Vec3.zero,
@@ -114,6 +118,6 @@ pub fn draw() void {
     );
     const projection = graphics.getProjectionOrtho(-1, 1, true);
 
-    // draw the sprite batch
+    // Draw sprite batch.
     sprite_batch.draw(.{ .view = view, .proj = projection }, math.Mat4.identity);
 }
