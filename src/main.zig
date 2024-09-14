@@ -168,8 +168,9 @@ const Config = struct {
     ball_speed: f32,
     ball_size: f32,
     paddle_speed: f32,
-    paddle_height: f32,
-    paddle_width: f32,
+    /// Height of the paddle in relation to the height of the playing field.
+    paddle_height_percent: f32,
+    paddle_width_percent: f32,
     wall_size: f32,
     score_wall_size: f32,
 
@@ -184,20 +185,53 @@ const Config = struct {
     pub fn getAspectRatio(self: *const Self) f32 {
         return self.getWidth() / self.getHeight();
     }
+
+    pub fn getPlayWidth(self: *const Self) f32 {
+        return self.getWidth() - self.score_wall_size * 2;
+    }
+
+    pub fn getPlayHeight(self: *const Self) f32 {
+        return self.getHeight() - self.wall_size * 2;
+    }
+
+    pub fn getBallSize(self: *const Self) f32 {
+        return self.ball_size * self.getPlayWidth() * 0.001;
+    }
+
+    pub fn getBallSpeed(self: *const Self) f32 {
+        return self.ball_speed * self.getPlayWidth() * 0.1;
+    }
+
+    pub fn getPaddleWidth(self: *const Self) f32 {
+        return self.getPlayWidth() * self.paddle_width_percent / 100;
+    }
+
+    pub fn getPaddleHeight(self: *const Self) f32 {
+        return self.getPlayHeight() * self.paddle_height_percent / 100;
+    }
+
+    pub fn getPaddleSpeed(self: *const Self) f32 {
+        return self.paddle_speed * self.getPlayHeight() * 0.1;
+    }
 };
 
 /// Game state struct
 const State = struct {
     const Self = @This();
 
-    /// Config
     config: Config,
     /// List of renderable entities.
     entities: std.ArrayList(Entity),
-    /// Pointers to important entities.
+
+    // Pointers to important entities.
     paddle_player1: *Entity,
     paddle_player2: *Entity,
     ball: *Entity,
+    player1_score_area: *Entity,
+    player2_score_area: *Entity,
+
+    player1_score: u8,
+    player2_score: u8,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) Self {
         return Self{
@@ -206,6 +240,10 @@ const State = struct {
             .paddle_player1 = undefined,
             .paddle_player2 = undefined,
             .ball = undefined,
+            .player1_score_area = undefined,
+            .player2_score_area = undefined,
+            .player1_score = 0,
+            .player2_score = 0,
         };
     }
 
@@ -220,6 +258,18 @@ const State = struct {
 
     pub fn addEntity(self: *Self, entity: Entity) !void {
         _ = try self.addAndReturnEntity(entity);
+    }
+
+    pub fn incScorePlayer1(self: *Self) void {
+        self.player1_score += 1;
+        // TODO: Remove, once proper display for scores is implemented.
+        std.debug.print("Updated score player 1: {d}\n", .{self.player1_score});
+    }
+
+    pub fn incScorePlayer2(self: *Self) void {
+        self.player2_score += 1;
+        // TODO: Remove, once proper display for scores is implemented.
+        std.debug.print("Updated score player 2: {d}\n", .{self.player2_score});
     }
 };
 
@@ -261,18 +311,22 @@ pub fn main() !void {
     try delve.modules.registerModule(physics.module);
     try delve.modules.registerModule(main_module);
 
+    // The scale will scale up the screen size.
+    // All other values are dependent on the screen size, so they will be
+    // calculated automatically according to the screen size.
+    const scale = 2;
     state = State.init(
         gpa.allocator(),
         .{
-            .width = 1024,
-            .height = 768,
-            .ball_speed = 800,
-            .ball_size = 16,
-            .paddle_speed = 800,
-            .paddle_width = 20,
-            .paddle_height = 150,
-            .wall_size = 50,
-            .score_wall_size = 100,
+            .width = 1024 * scale,
+            .height = 768 * scale,
+            .ball_speed = 6,
+            .ball_size = 14,
+            .paddle_speed = 10,
+            .paddle_height_percent = 20,
+            .paddle_width_percent = 2.5,
+            .wall_size = 20 * scale,
+            .score_wall_size = 60 * scale,
         },
     );
 
@@ -286,7 +340,7 @@ pub fn main() !void {
     });
 }
 
-pub fn init() !void {
+fn init() !void {
     batcher = delve.graphics.batcher.Batcher.init(.{}) catch {
         delve.debug.showErrorScreen("Fatal error during batch init!");
         return;
@@ -311,13 +365,13 @@ pub fn init() !void {
         color.primary,
     ));
     // Left wall
-    try state.addEntity(Entity.initStatic(
+    state.player2_score_area = try state.addAndReturnEntity(Entity.initStatic(
         spatial.Rect.fromSize(math.Vec2.new(config.score_wall_size, height))
             .setPosition(.{ .x = config.score_wall_size / 2, .y = height / 2 }),
         color.primary,
     ));
     // Right wall
-    try state.addEntity(Entity.initStatic(
+    state.player1_score_area = try state.addAndReturnEntity(Entity.initStatic(
         spatial.Rect.fromSize(math.Vec2.new(config.score_wall_size, height))
             .setPosition(.{ .x = width - config.score_wall_size / 2, .y = height / 2 }),
         color.primary,
@@ -325,9 +379,9 @@ pub fn init() !void {
 
     // Add player1 paddle entity.
     const player1_paddle = try state.addAndReturnEntity(Entity.initDynamic(
-        spatial.Rect.fromSize(math.Vec2.new(config.paddle_width, config.paddle_height))
+        spatial.Rect.fromSize(math.Vec2.new(config.getPaddleWidth(), config.getPaddleHeight()))
             .setPosition(.{
-            .x = config.score_wall_size + config.paddle_width / 2,
+            .x = config.score_wall_size + config.getPaddleWidth() / 2,
             .y = height / 2,
         }),
         color.player1,
@@ -340,9 +394,9 @@ pub fn init() !void {
 
     // Add player2 paddle entity.
     const player2_paddle = try state.addAndReturnEntity(Entity.initDynamic(
-        spatial.Rect.fromSize(math.Vec2.new(config.paddle_width, config.paddle_height))
+        spatial.Rect.fromSize(math.Vec2.new(config.getPaddleWidth(), config.getPaddleHeight()))
             .setPosition(.{
-            .x = width - config.score_wall_size - config.paddle_width / 2,
+            .x = width - config.score_wall_size - config.getPaddleWidth() / 2,
             .y = height / 2,
         }),
         color.player2,
@@ -355,7 +409,7 @@ pub fn init() !void {
 
     // Add ball entity.
     const ball = try state.addAndReturnEntity(Entity.initDynamic(
-        spatial.Rect.fromSize(math.Vec2.new(config.ball_size, config.ball_size))
+        spatial.Rect.fromSize(math.Vec2.new(config.getBallSize(), config.getBallSize()))
             .setPosition(.{
             .x = width / 2,
             .y = height / 2,
@@ -374,15 +428,17 @@ pub fn init() !void {
     state.ball = ball;
 }
 
-pub fn cleanup() !void {
+fn cleanup() !void {
     batcher.deinit();
 }
 
-pub fn tick(_: f32) void {
+fn tick(_: f32) void {
     // Quit game.
     if (input.isKeyJustPressed(.ESCAPE) or input.isKeyJustPressed(.Q)) {
         delve.platform.app.exit();
     }
+
+    updateScore();
 
     const config = state.config;
 
@@ -390,42 +446,36 @@ pub fn tick(_: f32) void {
     state.paddle_player1.stop();
     state.paddle_player2.stop();
     // Freeze ball velocity.
-    state.ball.freezeVelocity(config.ball_speed, config.getAspectRatio());
+    state.ball.freezeVelocity(config.getBallSpeed(), config.getAspectRatio());
 
     // Move player 1 paddle.
-    if (input.isKeyPressed(.J) or input.isKeyPressed(.S)) {
-        state.paddle_player1.move(.{ .x = 0, .y = config.paddle_speed });
+    if (input.isKeyPressed(.J) or input.isKeyPressed(.DOWN)) {
+        state.paddle_player1.move(.{ .x = 0, .y = config.getPaddleSpeed() });
     }
-    if (input.isKeyPressed(.K) or input.isKeyPressed(.W)) {
-        state.paddle_player1.move(.{ .x = 0, .y = -config.paddle_speed });
-    }
-
-    // Move player 2 paddle.
-    if (input.isKeyPressed(.DOWN)) {
-        state.paddle_player2.move(.{ .x = 0, .y = config.paddle_speed });
-    }
-    if (input.isKeyPressed(.UP)) {
-        state.paddle_player2.move(.{ .x = 0, .y = -config.paddle_speed });
+    if (input.isKeyPressed(.K) or input.isKeyPressed(.UP)) {
+        state.paddle_player1.move(.{ .x = 0, .y = -config.getPaddleSpeed() });
     }
 
     // Reset game.
-    if (input.isKeyJustPressed(.R) or input.isKeyJustPressed(.SPACE)) {
-        // Stop ball and reset its position to center.
-        state.ball.stop();
-        state.ball.place(.{ .x = config.getWidth() / 2, .y = config.getHeight() / 2 });
+    if (input.isKeyJustPressed(.R)) {
+        resetBall();
     }
 
     // Start game.
     if (input.isKeyJustPressed(.SPACE)) {
+        resetBall();
         // Get reandom start directions for the ball.
         const factorx: f32 = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
         const factory: f32 = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
         // Initiate ball movement.
-        state.ball.move(.{ .x = config.ball_speed * factorx, .y = config.ball_speed * factory });
+        state.ball.move(.{
+            .x = config.getBallSpeed() * factorx,
+            .y = config.getBallSpeed() * factory,
+        });
     }
 }
 
-pub fn draw() void {
+fn draw() void {
     const texture_region = delve.graphics.sprites.TextureRegion.default();
 
     batcher.reset();
@@ -459,4 +509,39 @@ pub fn draw() void {
 
     // Draw batch.
     batcher.draw(.{ .view = view, .proj = projection }, math.Mat4.identity);
+}
+
+fn resetBall() void {
+    // Stop ball and reset its position to center.
+    state.ball.stop();
+    state.ball.place(.{
+        .x = state.config.getWidth() / 2,
+        .y = state.config.getHeight() / 2,
+    });
+}
+
+/// Update player scores.
+/// Check which shapes are colliding in the current frame and update scores
+/// accordingly.
+fn updateScore() void {
+    const contact_events = physics.zb.b2World_GetContactEvents(physics.world);
+    for (0..@intCast(contact_events.beginCount)) |i| {
+        const event = contact_events.beginEvents[i];
+        if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.ball.physics_body.shape) or
+            physics.zb.B2_ID_EQUALS(event.shapeIdB, state.ball.physics_body.shape))
+        {
+            if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.player1_score_area.physics_body.shape) or
+                physics.zb.B2_ID_EQUALS(event.shapeIdB, state.player1_score_area.physics_body.shape))
+            {
+                state.incScorePlayer1();
+                // TODO: Uncomment, once basic AI is implemented.
+                // resetBall();
+            } else if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.player2_score_area.physics_body.shape) or
+                physics.zb.B2_ID_EQUALS(event.shapeIdB, state.player2_score_area.physics_body.shape))
+            {
+                state.incScorePlayer2();
+                resetBall();
+            }
+        }
+    }
 }
