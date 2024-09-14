@@ -106,6 +106,11 @@ const Entity = struct {
         );
     }
 
+    pub fn getVelocity(self: *const Self) math.Vec2 {
+        const vel = physics.zb.b2Body_GetLinearVelocity(self.physics_body.body);
+        return .{ .x = vel.x, .y = vel.y };
+    }
+
     pub fn place(self: *const Self, pos: math.Vec2) void {
         const body = self.physics_body.body;
         physics.zb.b2Body_SetTransform(
@@ -456,14 +461,16 @@ fn tick(_: f32) void {
         state.paddle_player1.move(.{ .x = 0, .y = -config.getPaddleSpeed() });
     }
 
+    updateEnemyPaddle();
+
     // Reset game.
     if (input.isKeyJustPressed(.R)) {
-        resetBall();
+        reset();
     }
 
     // Start game.
     if (input.isKeyJustPressed(.SPACE)) {
-        resetBall();
+        reset();
         // Get reandom start directions for the ball.
         const factorx: f32 = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
         const factory: f32 = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
@@ -511,11 +518,22 @@ fn draw() void {
     batcher.draw(.{ .view = view, .proj = projection }, math.Mat4.identity);
 }
 
-fn resetBall() void {
+fn reset() void {
     // Stop ball and reset its position to center.
     state.ball.stop();
     state.ball.place(.{
         .x = state.config.getWidth() / 2,
+        .y = state.config.getHeight() / 2,
+    });
+    // Stop players and reset their position.
+    state.paddle_player1.stop();
+    state.paddle_player1.place(.{
+        .x = state.config.score_wall_size + state.config.getPaddleWidth() / 2,
+        .y = state.config.getHeight() / 2,
+    });
+    state.paddle_player2.stop();
+    state.paddle_player2.place(.{
+        .x = state.config.getWidth() - state.config.score_wall_size - state.config.getPaddleWidth() / 2,
         .y = state.config.getHeight() / 2,
     });
 }
@@ -534,14 +552,38 @@ fn updateScore() void {
                 physics.zb.B2_ID_EQUALS(event.shapeIdB, state.player1_score_area.physics_body.shape))
             {
                 state.incScorePlayer1();
-                // TODO: Uncomment, once basic AI is implemented.
-                // resetBall();
+                reset();
             } else if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.player2_score_area.physics_body.shape) or
                 physics.zb.B2_ID_EQUALS(event.shapeIdB, state.player2_score_area.physics_body.shape))
             {
                 state.incScorePlayer2();
-                resetBall();
+                reset();
             }
+        }
+    }
+}
+
+/// Basic AI for enemy paddle (Player 2)
+fn updateEnemyPaddle() void {
+    const ball_pos = state.ball.getRect().getPosition();
+
+    const paddle_rect = state.paddle_player2.getRect();
+    const hh = paddle_rect.height / 2;
+    const paddle_pos = paddle_rect.getPosition();
+    const paddle_speed = state.config.getPaddleSpeed();
+
+    const delta = paddle_pos.sub(ball_pos);
+    // Time to collide (on X axis).
+    const ttc = delta.x / state.config.getBallSpeed();
+    // const threshold = hh * state.config.paddle_speed / 100;
+
+    const normalized_speed = @min(paddle_speed, @abs(delta.y) / ttc);
+
+    if (state.ball.getVelocity().x > 0 and ttc < 1) {
+        if (ball_pos.y > paddle_pos.y + hh * ttc) {
+            state.paddle_player2.move(.{ .x = 0, .y = normalized_speed });
+        } else if (ball_pos.y < paddle_pos.y - hh * ttc) {
+            state.paddle_player2.move(.{ .x = 0, .y = -normalized_speed });
         }
     }
 }
