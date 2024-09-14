@@ -227,6 +227,7 @@ const State = struct {
     config: Config,
     /// List of renderable entities.
     entities: std.ArrayList(Entity),
+    debug_mode: bool,
 
     // Pointers to important entities.
     paddle_player1: *Entity,
@@ -242,6 +243,7 @@ const State = struct {
         return Self{
             .config = config,
             .entities = std.ArrayList(Entity).init(allocator),
+            .debug_mode = false,
             .paddle_player1 = undefined,
             .paddle_player2 = undefined,
             .ball = undefined,
@@ -325,9 +327,9 @@ pub fn main() !void {
         .{
             .width = 1024 * scale,
             .height = 768 * scale,
-            .ball_speed = 6,
+            .ball_speed = 8,
             .ball_size = 14,
-            .paddle_speed = 10,
+            .paddle_speed = 12,
             .paddle_height_percent = 20,
             .paddle_width_percent = 2.5,
             .wall_size = 20 * scale,
@@ -443,6 +445,11 @@ fn tick(_: f32) void {
         delve.platform.app.exit();
     }
 
+    // Toggle debug mode.
+    if (input.isKeyJustPressed(.F1)) {
+        state.debug_mode = !state.debug_mode;
+    }
+
     updateScore();
 
     const config = state.config;
@@ -501,6 +508,13 @@ fn draw() void {
             );
         } else {
             batcher.addRectangle(entity.getRect(), texture_region, entity.color);
+        }
+    }
+
+    // Render debug information.
+    if (state.debug_mode) {
+        for (state.entities.items) |entity| {
+            batcher.addCircle(entity.getRect().getPosition(), 4, 12, texture_region, delve.colors.red);
         }
     }
 
@@ -564,12 +578,16 @@ fn updateScore() void {
 }
 
 /// Basic AI for enemy paddle (Player 2)
+/// TODO:
+/// Currently, the AI is too good; there is no way to beat it.
+/// Find a way to make it less perfect. Maybe introduce some randomness.
 fn updateEnemyPaddle() void {
-    const ball_pos = state.ball.getRect().getPosition();
+    const ball_rect = state.ball.getRect();
+    const ball_pos = ball_rect.getPosition().add(ball_rect.getSize().scale(0.5));
 
     const paddle_rect = state.paddle_player2.getRect();
     const hh = paddle_rect.height / 2;
-    const paddle_pos = paddle_rect.getPosition();
+    const paddle_pos = paddle_rect.getPosition().add(paddle_rect.getSize().scale(0.5));
     const paddle_speed = state.config.getPaddleSpeed();
 
     const delta = paddle_pos.sub(ball_pos);
