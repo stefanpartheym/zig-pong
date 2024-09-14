@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
 
     // Dependencies
     const delve_dep = b.dependency("delve", options);
+    const zbox2d_dep = b.dependency("zbox2d", options);
 
     const exe = b.addExecutable(.{
         .name = "zig-pong",
@@ -19,7 +20,13 @@ pub fn build(b: *std.Build) void {
         .optimize = options.optimize,
     });
 
+    // Make ZLS happy by adding all include paths from zbox2d module to the exe.
+    for (zbox2d_dep.module("zbox2d").include_dirs.items) |include_dir| {
+        exe.addIncludePath(include_dir.path.dupe(b));
+    }
+
     exe.root_module.addImport("delve", delve_dep.module("delve"));
+    exe.root_module.addImport("zbox2d", zbox2d_dep.module("zbox2d"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

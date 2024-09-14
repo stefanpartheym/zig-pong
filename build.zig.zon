@@ -27,6 +27,10 @@
             .url = "https://github.com/Interrupt/delve-framework/archive/f838f9a3bbd08bf61aa0554bf365e60503e2bf21.tar.gz",
             .hash = "12200425e3662dd59c23fb1c5ac7d146eedc74a2c1c42cebe86622f7f0fc492065fb",
         },
+        .zbox2d = .{
+            .url = "https://github.com/stefanpartheym/zbox2d/archive/refs/tags/v1.1.0.tar.gz",
+            .hash = "1220dbaa4bd31b94a469772b40a00074c29ad8181b0d4ff3bb83b32e60a5b7afad8c",
+        },
     },
     .paths = .{
         "build.zig",

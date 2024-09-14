@@ -5,9 +5,223 @@ const graphics = delve.platform.graphics;
 const spatial = delve.spatial;
 const math = delve.math;
 const std = @import("std");
+const physics = @import("./physics.zig");
 const utils = @import("./utils.zig");
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const Body = struct {
+    rect: spatial.Rect,
+};
+
+const Entity = struct {
+    const Self = @This();
+
+    body: Body,
+    physics_body: physics.PhysicsBody,
+    color: delve.colors.Color,
+    is_circle: bool,
+
+    fn init(
+        physics_body: physics.PhysicsBody,
+        rect: spatial.Rect,
+        cl: delve.colors.Color,
+        is_circle: bool,
+    ) Self {
+        return Self{
+            .body = .{ .rect = rect },
+            .physics_body = physics_body,
+            .color = cl,
+            .is_circle = is_circle,
+        };
+    }
+
+    pub fn initStatic(rect: spatial.Rect, cl: delve.colors.Color) Self {
+        return Self.init(physics.createStaticBody(rect), rect, cl, false);
+    }
+
+    pub fn initDynamic(rect: spatial.Rect, cl: delve.colors.Color) Self {
+        return Self.init(physics.createDynamicBody(rect), rect, cl, false);
+    }
+
+    pub fn initDynamicCircle(rect: spatial.Rect, cl: delve.colors.Color) Self {
+        return Self.init(physics.createBodyCircle(rect), rect, cl, true);
+    }
+
+    pub fn initKinetic(rect: spatial.Rect, cl: delve.colors.Color) Self {
+        return Self.init(physics.createKineticBody(rect), rect, cl, false);
+    }
+
+    // pub fn getQuad(self: *const Self) [4]math.Vec2 {
+    //     const body = physics.zb.b2Shape_GetBody(self.physics_body.shape);
+    //
+    //     const rect = self.getRect();
+    //
+    //     var verts = [4]math.Vec2{
+    //         rect.getBottomLeft(),
+    //         rect.getBottomRight(),
+    //         rect.getTopRight(),
+    //         rect.getTopLeft(),
+    //     };
+    //
+    //     const rotation = physics.zb.b2Body_GetRotation(body);
+    //     const sinRotation = rotation.s;
+    //     const cosRotation = rotation.c;
+    //     const x = rect.x;
+    //     const y = rect.y;
+    //     const dx = 0;
+    //     const dy = 0;
+    //
+    //     verts[0].x = x + dx * cosRotation - dy * sinRotation;
+    //     verts[0].y = y + dx * sinRotation + dy * cosRotation;
+    //
+    //     verts[1].x = x + (dx + rect.width) * cosRotation - dy * sinRotation;
+    //     verts[1].y = y + (dx + rect.width) * sinRotation + dy * cosRotation;
+    //
+    //     verts[2].x = x + dx * cosRotation - (dy + rect.height) * sinRotation;
+    //     verts[2].y = y + dx * sinRotation + (dy + rect.height) * cosRotation;
+    //
+    //     verts[3].x = x + (dx + rect.width) * cosRotation - (dy + rect.height) * sinRotation;
+    //     verts[3].y = y + (dx + rect.width) * sinRotation + (dy + rect.height) * cosRotation;
+    //
+    //     return verts;
+    // }
+
+    pub fn getRect(self: *const Self) spatial.Rect {
+        const size = self.body.rect.getSize();
+        const body = physics.zb.b2Shape_GetBody(self.physics_body.shape);
+        const pos = physics.zb.b2Body_GetWorldPoint(
+            body,
+            physics.zb.b2Vec2{ .x = -size.x / 2, .y = -size.y / 2 },
+        );
+
+        return spatial.Rect.fromSize(size).setPosition(.{ .x = pos.x, .y = pos.y });
+    }
+
+    /// Recturns Rect struct optimized to be passed to the `Batcher.addCricle`
+    /// method.
+    pub fn getCircleRect(self: *const Self) spatial.Rect {
+        const rect = self.getRect();
+        return spatial.Rect.new(
+            math.Vec2.new(rect.width / 2, rect.height / 2),
+            rect.getSize(),
+        );
+    }
+
+    pub fn place(self: *const Self, pos: math.Vec2) void {
+        const body = self.physics_body.body;
+        physics.zb.b2Body_SetTransform(
+            body,
+            .{ .x = pos.x, .y = pos.y },
+            physics.zb.b2Body_GetRotation(body),
+        );
+    }
+
+    pub fn move(self: *const Self, diff: math.Vec2) void {
+        const body = self.physics_body.body;
+        physics.zb.b2Body_SetLinearVelocity(body, .{ .x = diff.x, .y = diff.y });
+    }
+
+    /// Stop an entity. Basically, reset its linear velocity to zero.
+    pub fn stop(self: *const Self) void {
+        const body = self.physics_body.body;
+        physics.zb.b2Body_SetLinearVelocity(body, .{ .x = 0, .y = 0 });
+        physics.zb.b2Body_SetLinearDamping(body, 0);
+    }
+
+    /// Freeze an entity's linear velocity to a certain target value.
+    pub fn freezeVelocity(self: *const Self, target: f32, aspect_ratio: f32) void {
+        const body = self.physics_body.body;
+        const velocity = physics.zb.b2Body_GetLinearVelocity(body);
+        const vx = @abs(velocity.x);
+        const vy = @abs(velocity.y);
+
+        // Leave velocity, if both X and Y are zero.
+        if (vx == 0 and vy == 0) {
+            return;
+        }
+
+        // Initialize corrected velocity based on current velocity.
+        var corrected = physics.zb.b2Vec2{ .x = velocity.x, .y = velocity.y };
+
+        // Fix X velocity, if necessary.
+        if (vx != target) {
+            corrected.x = target * std.math.sign(velocity.x);
+        }
+
+        // Fix Y velocity, if necessary.
+        // Using the aspect ratio to potentially make target velocity lower than
+        // the one of X.
+        if (vy != target / aspect_ratio) {
+            corrected.y = target / aspect_ratio * std.math.sign(velocity.y);
+        }
+
+        // Set corrected velocity.
+        physics.zb.b2Body_SetLinearVelocity(body, corrected);
+    }
+};
+
+/// Game config struct
+const Config = struct {
+    const Self = @This();
+
+    width: i32,
+    height: i32,
+    ball_speed: f32,
+    ball_size: f32,
+    paddle_speed: f32,
+    paddle_height: f32,
+    paddle_width: f32,
+    wall_size: f32,
+    score_wall_size: f32,
+
+    pub fn getWidth(self: *const Self) f32 {
+        return @floatFromInt(self.width);
+    }
+
+    pub fn getHeight(self: *const Self) f32 {
+        return @floatFromInt(self.height);
+    }
+
+    pub fn getAspectRatio(self: *const Self) f32 {
+        return self.getWidth() / self.getHeight();
+    }
+};
+
+/// Game state struct
+const State = struct {
+    const Self = @This();
+
+    /// Config
+    config: Config,
+    /// List of renderable entities.
+    entities: std.ArrayList(Entity),
+    /// Pointers to important entities.
+    paddle_player1: *Entity,
+    paddle_player2: *Entity,
+    ball: *Entity,
+
+    pub fn init(allocator: std.mem.Allocator, config: Config) Self {
+        return Self{
+            .config = config,
+            .entities = std.ArrayList(Entity).init(allocator),
+            .paddle_player1 = undefined,
+            .paddle_player2 = undefined,
+            .ball = undefined,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.entities.deinit();
+    }
+
+    pub fn addAndReturnEntity(self: *Self, entity: Entity) !*Entity {
+        try self.entities.append(entity);
+        return &self.entities.items[self.entities.items.len - 1];
+    }
+
+    pub fn addEntity(self: *Self, entity: Entity) !void {
+        _ = try self.addAndReturnEntity(entity);
+    }
+};
 
 const color = .{
     .background = utils.colorFromInt(0x000000ff),
@@ -17,35 +231,21 @@ const color = .{
     .player2 = delve.colors.pink,
 };
 
-var time: f32 = 0.0;
-const width = 1024;
-const height = 768;
-const paddle_speed: f32 = 7.5;
-const player_paddle_height = 150;
-const player_paddle_width = 20;
-const wall_size = 50;
-
-var shader_default: graphics.Shader = undefined;
-const texture_region_default = delve.graphics.sprites.TextureRegion.default();
-var sprite_batch: delve.graphics.batcher.SpriteBatcher = undefined;
-
-var player1_paddle = spatial.Rect.fromSize(math.Vec2.new(player_paddle_width, player_paddle_height))
-    .setPosition(.{ .x = wall_size, .y = height / 2 - player_paddle_height / 2 });
-var player2_paddle = spatial.Rect.fromSize(math.Vec2.new(player_paddle_width, player_paddle_height))
-    .setPosition(.{ .x = width - wall_size - player_paddle_width, .y = height / 2 - player_paddle_height / 2 });
-const arena = &[_]spatial.Rect{
-    spatial.Rect.fromSize(math.Vec2.new(width, wall_size)).setPosition(.{ .x = 0, .y = 0 }),
-    spatial.Rect.fromSize(math.Vec2.new(width, wall_size)).setPosition(.{ .x = 0, .y = height - wall_size }),
-    spatial.Rect.fromSize(math.Vec2.new(wall_size, height)).setPosition(.{ .x = 0, .y = 0 }),
-    spatial.Rect.fromSize(math.Vec2.new(wall_size, height)).setPosition(.{ .x = width - wall_size, .y = 0 }),
-};
+var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
+var batcher: delve.graphics.batcher.Batcher = undefined;
+var state: State = undefined;
 
 pub fn main() !void {
+    gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    // TODO: Ignore memory leaks for now.
+    // defer _ = gpa.deinit();
+
     const main_module = delve.modules.Module{
         .name = "main",
         .init_fn = init,
         .tick_fn = tick,
         .draw_fn = draw,
+        .cleanup_fn = cleanup,
     };
 
     // Pick the allocator to use depending on platform
@@ -58,59 +258,198 @@ pub fn main() !void {
         try delve.init(gpa.allocator());
     }
 
+    try delve.modules.registerModule(physics.module);
     try delve.modules.registerModule(main_module);
+
+    state = State.init(
+        gpa.allocator(),
+        .{
+            .width = 1024,
+            .height = 768,
+            .ball_speed = 800,
+            .ball_size = 16,
+            .paddle_speed = 800,
+            .paddle_width = 20,
+            .paddle_height = 150,
+            .wall_size = 50,
+            .score_wall_size = 100,
+        },
+    );
+
+    defer state.deinit();
 
     try app.start(app.AppConfig{
         .title = "zig-pong",
-        .width = width,
-        .height = height,
+        .width = state.config.width,
+        .height = state.config.height,
         .target_fps = 60,
     });
 }
 
 pub fn init() !void {
-    sprite_batch = delve.graphics.batcher.SpriteBatcher.init(.{}) catch {
+    batcher = delve.graphics.batcher.Batcher.init(.{}) catch {
         delve.debug.showErrorScreen("Fatal error during batch init!");
         return;
     };
-    shader_default = graphics.Shader.initDefault(.{});
     delve.platform.graphics.setClearColor(color.background);
+
+    const config = state.config;
+    const width = state.config.getWidth();
+    const height = state.config.getHeight();
+
+    // Add arena entites.
+    // Floor
+    try state.addEntity(Entity.initStatic(
+        spatial.Rect.fromSize(math.Vec2.new(width, config.wall_size))
+            .setPosition(.{ .x = width / 2, .y = config.wall_size / 2 }),
+        color.primary,
+    ));
+    // Ceiling
+    try state.addEntity(Entity.initStatic(
+        spatial.Rect.fromSize(math.Vec2.new(width, config.wall_size))
+            .setPosition(.{ .x = width / 2, .y = height - config.wall_size / 2 }),
+        color.primary,
+    ));
+    // Left wall
+    try state.addEntity(Entity.initStatic(
+        spatial.Rect.fromSize(math.Vec2.new(config.score_wall_size, height))
+            .setPosition(.{ .x = config.score_wall_size / 2, .y = height / 2 }),
+        color.primary,
+    ));
+    // Right wall
+    try state.addEntity(Entity.initStatic(
+        spatial.Rect.fromSize(math.Vec2.new(config.score_wall_size, height))
+            .setPosition(.{ .x = width - config.score_wall_size / 2, .y = height / 2 }),
+        color.primary,
+    ));
+
+    // Add player1 paddle entity.
+    const player1_paddle = try state.addAndReturnEntity(Entity.initDynamic(
+        spatial.Rect.fromSize(math.Vec2.new(config.paddle_width, config.paddle_height))
+            .setPosition(.{
+            .x = config.score_wall_size + config.paddle_width / 2,
+            .y = height / 2,
+        }),
+        color.player1,
+    ));
+    physics.zb.b2Shape_SetDensity(player1_paddle.physics_body.shape, 5);
+    physics.zb.b2Shape_SetFriction(player1_paddle.physics_body.shape, 1);
+    physics.zb.b2Shape_SetRestitution(player1_paddle.physics_body.shape, 1);
+    physics.zb.b2Body_SetFixedRotation(player1_paddle.physics_body.body, true);
+    state.paddle_player1 = player1_paddle;
+
+    // Add player2 paddle entity.
+    const player2_paddle = try state.addAndReturnEntity(Entity.initDynamic(
+        spatial.Rect.fromSize(math.Vec2.new(config.paddle_width, config.paddle_height))
+            .setPosition(.{
+            .x = width - config.score_wall_size - config.paddle_width / 2,
+            .y = height / 2,
+        }),
+        color.player2,
+    ));
+    physics.zb.b2Shape_SetDensity(player2_paddle.physics_body.shape, 5);
+    physics.zb.b2Shape_SetFriction(player2_paddle.physics_body.shape, 1);
+    physics.zb.b2Shape_SetRestitution(player2_paddle.physics_body.shape, 1);
+    physics.zb.b2Body_SetFixedRotation(player2_paddle.physics_body.body, true);
+    state.paddle_player2 = player2_paddle;
+
+    // Add ball entity.
+    const ball = try state.addAndReturnEntity(Entity.initDynamic(
+        spatial.Rect.fromSize(math.Vec2.new(config.ball_size, config.ball_size))
+            .setPosition(.{
+            .x = width / 2,
+            .y = height / 2,
+        }),
+        color.secondary,
+    ));
+    // NOTE: To render the ball as an actual ball, uncomment the following line:
+    // ball.is_circle = true;
+    physics.zb.b2Body_SetFixedRotation(ball.physics_body.body, true);
+    physics.zb.b2Body_SetBullet(ball.physics_body.body, true);
+    physics.zb.b2Body_SetLinearDamping(ball.physics_body.body, 0);
+    physics.zb.b2Shape_SetFriction(ball.physics_body.shape, 0);
+    physics.zb.b2Shape_SetDensity(ball.physics_body.shape, 1);
+    physics.zb.b2Shape_SetRestitution(ball.physics_body.shape, 1);
+    ball.stop();
+    state.ball = ball;
 }
 
-pub fn tick(delta: f32) void {
-    time += delta;
+pub fn cleanup() !void {
+    batcher.deinit();
+}
 
+pub fn tick(_: f32) void {
+    // Quit game.
     if (input.isKeyJustPressed(.ESCAPE) or input.isKeyJustPressed(.Q)) {
         delve.platform.app.exit();
     }
 
-    if (input.isKeyPressed(.J)) {
-        player1_paddle.y += paddle_speed;
+    const config = state.config;
+
+    // Reset paddle velocities.
+    state.paddle_player1.stop();
+    state.paddle_player2.stop();
+    // Freeze ball velocity.
+    state.ball.freezeVelocity(config.ball_speed, config.getAspectRatio());
+
+    // Move player 1 paddle.
+    if (input.isKeyPressed(.J) or input.isKeyPressed(.S)) {
+        state.paddle_player1.move(.{ .x = 0, .y = config.paddle_speed });
     }
-    if (input.isKeyPressed(.K)) {
-        player1_paddle.y -= paddle_speed;
+    if (input.isKeyPressed(.K) or input.isKeyPressed(.W)) {
+        state.paddle_player1.move(.{ .x = 0, .y = -config.paddle_speed });
     }
-    if (input.isKeyPressed(.SPACE)) {
-        // TODO: Spawn ball.
+
+    // Move player 2 paddle.
+    if (input.isKeyPressed(.DOWN)) {
+        state.paddle_player2.move(.{ .x = 0, .y = config.paddle_speed });
+    }
+    if (input.isKeyPressed(.UP)) {
+        state.paddle_player2.move(.{ .x = 0, .y = -config.paddle_speed });
+    }
+
+    // Reset game.
+    if (input.isKeyJustPressed(.R) or input.isKeyJustPressed(.SPACE)) {
+        // Stop ball and reset its position to center.
+        state.ball.stop();
+        state.ball.place(.{ .x = config.getWidth() / 2, .y = config.getHeight() / 2 });
+    }
+
+    // Start game.
+    if (input.isKeyJustPressed(.SPACE)) {
+        // Get reandom start directions for the ball.
+        const factorx: f32 = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
+        const factory: f32 = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
+        // Initiate ball movement.
+        state.ball.move(.{ .x = config.ball_speed * factorx, .y = config.ball_speed * factory });
     }
 }
 
 pub fn draw() void {
-    sprite_batch.reset();
+    const texture_region = delve.graphics.sprites.TextureRegion.default();
 
-    sprite_batch.useShader(shader_default);
-    sprite_batch.useTexture(graphics.tex_white);
+    batcher.reset();
 
     // Add entities to be rendered.
-    for (arena) |entity| {
-        sprite_batch.addRectangle(entity, texture_region_default, color.primary);
+    for (state.entities.items) |entity| {
+        if (entity.is_circle) {
+            const rect = entity.getRect();
+            const pos = rect.getPosition();
+            batcher.addCircle(
+                pos.add(math.Vec2.new(rect.width / 2, rect.height / 2)),
+                rect.width / 2,
+                12,
+                texture_region,
+                entity.color,
+            );
+        } else {
+            batcher.addRectangle(entity.getRect(), texture_region, entity.color);
+        }
     }
-    sprite_batch.addRectangle(player1_paddle, texture_region_default, color.player1);
-    sprite_batch.addRectangle(player2_paddle, texture_region_default, color.player2);
 
-    sprite_batch.apply();
+    batcher.apply();
 
-    // Setup view and projection.
+    // Setup view and projection for a 2D environment.
     const view = math.Mat4.lookat(
         .{ .x = 0, .y = 0, .z = 1 },
         math.Vec3.zero,
@@ -118,6 +457,6 @@ pub fn draw() void {
     );
     const projection = graphics.getProjectionOrtho(-1, 1, true);
 
-    // Draw sprite batch.
-    sprite_batch.draw(.{ .view = view, .proj = projection }, math.Mat4.identity);
+    // Draw batch.
+    batcher.draw(.{ .view = view, .proj = projection }, math.Mat4.identity);
 }
