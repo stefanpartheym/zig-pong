@@ -238,8 +238,15 @@ const State = struct {
 
     player1_score: u8,
     player2_score: u8,
+    /// Next serve indicates in which direction the ball will move in the next
+    /// round.
+    /// Value will be either `1` or `-1`. When moving the ball the X velocity
+    /// will be multiplied by this factor.
+    /// The initial value is determined randomly.
+    next_serve: f32,
 
     pub fn init(allocator: std.mem.Allocator, config: Config) Self {
+        const random_next_serve = std.math.sign(std.crypto.random.int(i8));
         return Self{
             .config = config,
             .entities = std.ArrayList(Entity).init(allocator),
@@ -251,6 +258,7 @@ const State = struct {
             .player2_score_area = undefined,
             .player1_score = 0,
             .player2_score = 0,
+            .next_serve = if (random_next_serve == 0) 1 else @floatFromInt(random_next_serve),
         };
     }
 
@@ -267,14 +275,16 @@ const State = struct {
         _ = try self.addAndReturnEntity(entity);
     }
 
-    pub fn incScorePlayer1(self: *Self) void {
+    pub fn scorePlayer1(self: *Self) void {
         self.player1_score += 1;
+        self.next_serve = -1; // Initiate ball movemnt to left side next round.
         // TODO: Remove, once proper display for scores is implemented.
         std.debug.print("Updated score player 1: {d}\n", .{self.player1_score});
     }
 
-    pub fn incScorePlayer2(self: *Self) void {
+    pub fn scorePlayer2(self: *Self) void {
         self.player2_score += 1;
+        self.next_serve = 1; // Initiate ball movemnt to right side next round.
         // TODO: Remove, once proper display for scores is implemented.
         std.debug.print("Updated score player 2: {d}\n", .{self.player2_score});
     }
@@ -457,7 +467,7 @@ fn tick(_: f32) void {
     // Reset paddle velocities.
     state.paddle_player1.stop();
     state.paddle_player2.stop();
-    // Freeze ball velocity.
+    // Make sure, the ball moves at constant speed.
     state.ball.freezeVelocity(config.getBallSpeed(), config.getAspectRatio());
 
     // Move player 1 paddle.
@@ -478,13 +488,10 @@ fn tick(_: f32) void {
     // Start game.
     if (input.isKeyJustPressed(.SPACE)) {
         reset();
-        // Get reandom start directions for the ball.
-        const factorx: f32 = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
-        const factory: f32 = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
         // Initiate ball movement.
         state.ball.move(.{
-            .x = config.getBallSpeed() * factorx,
-            .y = config.getBallSpeed() * factory,
+            .x = config.getBallSpeed() * state.next_serve,
+            .y = 0,
         });
     }
 }
@@ -562,16 +569,41 @@ fn updateScore() void {
         if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.ball.physics_body.shape) or
             physics.zb.B2_ID_EQUALS(event.shapeIdB, state.ball.physics_body.shape))
         {
+            // Player 1 scored.
             if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.player1_score_area.physics_body.shape) or
                 physics.zb.B2_ID_EQUALS(event.shapeIdB, state.player1_score_area.physics_body.shape))
             {
-                state.incScorePlayer1();
+                state.scorePlayer1();
                 reset();
-            } else if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.player2_score_area.physics_body.shape) or
+            }
+            // Player 2 scored.
+            else if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.player2_score_area.physics_body.shape) or
                 physics.zb.B2_ID_EQUALS(event.shapeIdB, state.player2_score_area.physics_body.shape))
             {
-                state.incScorePlayer2();
+                state.scorePlayer2();
                 reset();
+            }
+            // Initiate Y velocity on ball, when ball collides with a paddle the
+            // first time.
+            else if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.paddle_player1.physics_body.shape) or
+                physics.zb.B2_ID_EQUALS(event.shapeIdB, state.paddle_player1.physics_body.shape) or
+                physics.zb.B2_ID_EQUALS(event.shapeIdA, state.paddle_player2.physics_body.shape) or
+                physics.zb.B2_ID_EQUALS(event.shapeIdB, state.paddle_player2.physics_body.shape))
+            {
+                const vel = state.ball.getVelocity();
+                if (vel.y == 0) {
+                    var paddle = event.shapeIdA;
+                    if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.ball.physics_body.shape)) {
+                        paddle = event.shapeIdB;
+                    }
+                    const paddle_vel = physics.zb.b2Body_GetLinearVelocity(physics.zb.b2Shape_GetBody(paddle));
+                    var factor = std.math.sign(paddle_vel.y);
+                    if (paddle_vel.y == 0) {
+                        factor = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
+                    }
+
+                    state.ball.move(.{ .x = vel.x, .y = state.config.ball_speed * factor });
+                }
             }
         }
     }
