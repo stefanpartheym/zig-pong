@@ -4,6 +4,7 @@ const input = delve.platform.input;
 const graphics = delve.platform.graphics;
 const spatial = delve.spatial;
 const math = delve.math;
+const audio = delve.platform.audio;
 const std = @import("std");
 const physics = @import("./physics.zig");
 const utils = @import("./utils.zig");
@@ -309,6 +310,7 @@ const State = struct {
     /// List of renderable texts.
     texts: std.ArrayList(Text),
     debug_mode: bool,
+    audio_enabled: bool,
 
     // Pointers to important entities.
     paddle_player1: *Entity,
@@ -336,6 +338,7 @@ const State = struct {
             .entities = std.ArrayList(Entity).init(allocator),
             .texts = std.ArrayList(Text).init(allocator),
             .debug_mode = false,
+            .audio_enabled = true,
             .paddle_player1 = undefined,
             .paddle_player2 = undefined,
             .ball = undefined,
@@ -442,6 +445,7 @@ pub fn main() !void {
         .width = state.config.width,
         .height = state.config.height,
         .target_fps = 60,
+        .enable_audio = true,
     });
 }
 
@@ -599,6 +603,11 @@ fn tick(_: f32) void {
         state.debug_mode = !state.debug_mode;
     }
 
+    // Toggle audio.
+    if (input.isKeyJustPressed(.F2)) {
+        state.audio_enabled = !state.audio_enabled;
+    }
+
     const config = state.config;
 
     // Reset paddle velocities.
@@ -742,6 +751,7 @@ fn updateScore() void {
             {
                 state.scorePlayer1();
                 reset();
+                playSound("assets/score.wav");
             }
             // Player 2 scored.
             else if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.player2_score_area.physics_body.shape) or
@@ -749,6 +759,7 @@ fn updateScore() void {
             {
                 state.scorePlayer2();
                 reset();
+                playSound("assets/score.wav");
             } else {
                 const vel = state.ball.getVelocity();
                 var paddle = event.shapeIdA;
@@ -770,6 +781,7 @@ fn updateScore() void {
                 else if (paddle_vel.y != 0 and std.math.sign(vel.y) != std.math.sign(paddle_vel.y)) {
                     state.ball.move(.{ .x = vel.x, .y = vel.y * -1 });
                 }
+                playSound("assets/hit.wav");
             }
         }
     }
@@ -798,5 +810,11 @@ fn updateEnemyPaddle() void {
         } else if (ball_pos.y < paddle_pos.y - threshold) {
             state.paddle_player2.move(.{ .x = 0, .y = -randomized_speed });
         }
+    }
+}
+
+fn playSound(path: [:0]const u8) void {
+    if (state.audio_enabled) {
+        _ = audio.playSound(path, 1);
     }
 }

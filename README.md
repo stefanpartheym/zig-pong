@@ -18,7 +18,9 @@ zig build run
 
 List of all the assets used in this game:
 
-| File                          | Source                                             |
-| ----------------------------- | -------------------------------------------------- |
-| `assets/fonts/Mecha.ttf`      | [dafont.com](https://www.dafont.com/mecha-cf.font) |
-| `assets/fonts/Mecha_Bold.ttf` | [dafont.com](https://www.dafont.com/mecha-cf.font) |
+| File                          | Source/Author                                       |
+| ----------------------------- | --------------------------------------------------- |
+| `assets/fonts/Mecha.ttf`      | [dafont.com](https://www.dafont.com/mecha-cf.font)  |
+| `assets/fonts/Mecha_Bold.ttf` | [dafont.com](https://www.dafont.com/mecha-cf.font)  |
+| `assets/hit.wav`              | [stefanpartheym](https://github.com/stefanpartheym) |
+| `assets/score.wav`            | [stefanpartheym](https://github.com/stefanpartheym) |
