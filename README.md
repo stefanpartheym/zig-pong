@@ -14,6 +14,16 @@ While a whole physics engine for a simple pong game is a total overkill, the edu
 zig build run
 ```
 
+## Controls
+
+| Key               | Description                |
+| ----------------- | -------------------------- |
+| `J`, `Arrow Down` | Move paddle down           |
+| `K`, `Arrow Up`   | Move paddle up             |
+| `Space`           | Start game                 |
+| `F1`              | Toggle deubg redering mode |
+| `F2`              | Toggle audio               |
+
 ## Assets
 
 List of all the assets used in this game:
