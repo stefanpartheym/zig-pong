@@ -11,3 +11,12 @@ While a whole physics engine for a simple pong game is a total overkill, the edu
 ```sh
 zig build run
 ```
+
+## Assets
+
+List of all the assets used in this game:
+
+| File                          | Source                                             |
+| ----------------------------- | -------------------------------------------------- |
+| `assets/fonts/Mecha.ttf`      | [dafont.com](https://www.dafont.com/mecha-cf.font) |
+| `assets/fonts/Mecha_Bold.ttf` | [dafont.com](https://www.dafont.com/mecha-cf.font) |
