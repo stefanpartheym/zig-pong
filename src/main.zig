@@ -335,7 +335,7 @@ const State = struct {
             .config = config,
             .entities = std.ArrayList(Entity).init(allocator),
             .texts = std.ArrayList(Text).init(allocator),
-            .debug_mode = true,
+            .debug_mode = false,
             .paddle_player1 = undefined,
             .paddle_player2 = undefined,
             .ball = undefined,
@@ -551,7 +551,7 @@ fn init() !void {
     {
         const font_size = 64;
         const text_width = font_size / 2 * 2;
-        const pos_y = 0;
+        const pos_y = (state.config.score_board_size - font_size) / 2;
         const offset = 180;
 
         try state.texts.append(try Text.initDynamic(
@@ -684,11 +684,12 @@ fn draw() void {
 
     for (state.texts.items) |text| {
         const font_size = @as(f32, @floatFromInt(text.size));
-        const scale: f32 = font_size / text.font.font_size;
-        var x_pos: f32 = text.pos.x / scale;
-        // TODO: Weird gymnastics that I need to do, because the Y-axis of
+        const scale = font_size / text.font.font_size;
+        var x_pos = text.pos.x / scale;
+        // TODO:
+        // Weird gymnastics that I need to do, because the Y-axis of
         // `camera_fonts` projection is not flipped.
-        var y_pos: f32 = (-state.config.getHeight() + text.pos.y + font_size) / scale;
+        var y_pos = (-state.config.getHeight() + text.pos.y + font_size) / scale - font_size / 2;
         delve.fonts.addStringToSpriteBatch(
             text.font,
             &sprite_batcher,
