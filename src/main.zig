@@ -599,8 +599,6 @@ fn tick(_: f32) void {
         state.debug_mode = !state.debug_mode;
     }
 
-    updateScore();
-
     const config = state.config;
 
     // Reset paddle velocities.
@@ -618,6 +616,7 @@ fn tick(_: f32) void {
     }
 
     updateEnemyPaddle();
+    updateScore();
 
     // Reset game.
     if (input.isKeyJustPressed(.R)) {
@@ -773,9 +772,6 @@ fn updateScore() void {
 }
 
 /// Basic AI for enemy paddle (Player 2)
-/// TODO:
-/// Currently, the AI is too good; there is no way to beat it.
-/// Find a way to make it less perfect. Maybe introduce some randomness.
 fn updateEnemyPaddle() void {
     // Ball: Add half sizes to position to get center point.
     const ball_rect = state.ball.getRect();
@@ -789,12 +785,14 @@ fn updateEnemyPaddle() void {
     const ttc = delta.x / state.config.getBallSpeed(); // ttc = Time To Collide (on X axis).
     const threshold = paddle_rect.height / 2 * ttc;
     const normalized_speed = @min(state.config.getPaddleSpeed(), @abs(delta.y) / ttc);
+    // TODO: First attempt to make AI less perfect.
+    const randomized_speed = @max(0.7, std.crypto.random.float(f32)) * normalized_speed;
 
     if (state.ball.getVelocity().x > 0 and ttc < 1) {
         if (ball_pos.y > paddle_pos.y + threshold) {
-            state.paddle_player2.move(.{ .x = 0, .y = normalized_speed });
+            state.paddle_player2.move(.{ .x = 0, .y = randomized_speed });
         } else if (ball_pos.y < paddle_pos.y - threshold) {
-            state.paddle_player2.move(.{ .x = 0, .y = -normalized_speed });
+            state.paddle_player2.move(.{ .x = 0, .y = -randomized_speed });
         }
     }
 }
