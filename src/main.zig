@@ -422,16 +422,16 @@ pub fn main() !void {
     // The scale will scale up the screen size.
     // All other values are dependent on the screen size, so they will be
     // calculated automatically according to the screen size.
-    const scale = 2;
+    const scale = 1;
     state = try State.init(
         gpa.allocator(),
         .{
             .width = 1024 * scale,
             .height = 768 * scale,
-            .ball_speed = 8,
+            .ball_speed = 10,
             .ball_size = 14,
             .paddle_speed = 12,
-            .paddle_height_percent = 20,
+            .paddle_height_percent = 18,
             .paddle_width_percent = 2.5,
             .wall_size = 20 * scale,
             .score_board_size = 60 * scale,
@@ -804,7 +804,7 @@ fn updateEnemyPaddle() void {
     // TODO: First attempt to make AI less perfect.
     const randomized_speed = @max(0.7, std.crypto.random.float(f32)) * normalized_speed;
 
-    if (state.ball.getVelocity().x > 0 and ttc < 1) {
+    if (ttc < 0.8) {
         if (ball_pos.y > paddle_pos.y + threshold) {
             state.paddle_player2.move(.{ .x = 0, .y = randomized_speed });
         } else if (ball_pos.y < paddle_pos.y - threshold) {
