@@ -12,6 +12,72 @@ const Body = struct {
     rect: spatial.Rect,
 };
 
+const Text = struct {
+    const Self = @This();
+    const TextError = error{FontNotLoaded};
+
+    pos: math.Vec2,
+    size: u32,
+    color: delve.colors.Color,
+    font: *delve.fonts.LoadedFont,
+    text: []const u8,
+    text_fn: ?*const fn () anyerror![]const u8,
+
+    fn init(
+        text: []const u8,
+        text_fn: ?*const fn () anyerror![]const u8,
+        pos: math.Vec2,
+        size: u32,
+        cl: delve.colors.Color,
+        font_name: []const u8,
+    ) !Self {
+        const loaded_font = delve.fonts.getLoadedFont(font_name);
+        if (loaded_font) |font| {
+            return Self{
+                .pos = pos,
+                .size = size,
+                .color = cl,
+                .font = font,
+                .text = text,
+                .text_fn = text_fn,
+            };
+        } else {
+            return Self.TextError.FontNotLoaded;
+        }
+    }
+
+    fn initStatic(
+        text: []const u8,
+        pos: math.Vec2,
+        size: u32,
+        cl: delve.colors.Color,
+        font_name: []const u8,
+    ) !Self {
+        return Self.init(text, null, pos, size, cl, font_name);
+    }
+
+    fn initDynamic(
+        text_fn: *const fn () anyerror![]const u8,
+        pos: math.Vec2,
+        size: u32,
+        cl: delve.colors.Color,
+        font_name: []const u8,
+    ) !Self {
+        return Self.init("", text_fn, pos, size, cl, font_name);
+    }
+
+    pub fn getText(self: *const Self) []const u8 {
+        if (self.text_fn) |text_fn| {
+            return text_fn() catch {
+                std.debug.print("Error rendering score to buffer\n", .{});
+                return "##";
+            };
+        } else {
+            return self.text;
+        }
+    }
+};
+
 const Entity = struct {
     const Self = @This();
 
@@ -19,19 +85,26 @@ const Entity = struct {
     physics_body: physics.PhysicsBody,
     color: delve.colors.Color,
     is_circle: bool,
+    apply_physics: bool,
 
     fn init(
-        physics_body: physics.PhysicsBody,
+        opt_physics_body: ?physics.PhysicsBody,
         rect: spatial.Rect,
         cl: delve.colors.Color,
         is_circle: bool,
     ) Self {
+        const has_physics = opt_physics_body != null;
         return Self{
             .body = .{ .rect = rect },
-            .physics_body = physics_body,
+            .physics_body = if (has_physics) opt_physics_body.? else undefined,
             .color = cl,
             .is_circle = is_circle,
+            .apply_physics = has_physics,
         };
+    }
+
+    pub fn initVisual(rect: spatial.Rect, cl: delve.colors.Color) Self {
+        return Self.init(null, rect, cl, false);
     }
 
     pub fn initStatic(rect: spatial.Rect, cl: delve.colors.Color) Self {
@@ -86,14 +159,18 @@ const Entity = struct {
     // }
 
     pub fn getRect(self: *const Self) spatial.Rect {
-        const size = self.body.rect.getSize();
-        const body = physics.zb.b2Shape_GetBody(self.physics_body.shape);
-        const pos = physics.zb.b2Body_GetWorldPoint(
-            body,
-            physics.zb.b2Vec2{ .x = -size.x / 2, .y = -size.y / 2 },
-        );
+        if (self.apply_physics) {
+            const size = self.body.rect.getSize();
+            const body = physics.zb.b2Shape_GetBody(self.physics_body.shape);
+            const pos = physics.zb.b2Body_GetWorldPoint(
+                body,
+                physics.zb.b2Vec2{ .x = -size.x / 2, .y = -size.y / 2 },
+            );
 
-        return spatial.Rect.fromSize(size).setPosition(.{ .x = pos.x, .y = pos.y });
+            return spatial.Rect.fromSize(size).setPosition(.{ .x = pos.x, .y = pos.y });
+        } else {
+            return self.body.rect;
+        }
     }
 
     /// Recturns Rect struct optimized to be passed to the `Batcher.addCricle`
@@ -177,7 +254,7 @@ const Config = struct {
     paddle_height_percent: f32,
     paddle_width_percent: f32,
     wall_size: f32,
-    score_wall_size: f32,
+    score_board_size: f32,
 
     pub fn getWidth(self: *const Self) f32 {
         return @floatFromInt(self.width);
@@ -192,11 +269,11 @@ const Config = struct {
     }
 
     pub fn getPlayWidth(self: *const Self) f32 {
-        return self.getWidth() - self.score_wall_size * 2;
+        return self.getWidth() - self.wall_size * 2;
     }
 
     pub fn getPlayHeight(self: *const Self) f32 {
-        return self.getHeight() - self.wall_size * 2;
+        return self.getHeight() - self.wall_size + self.score_board_size;
     }
 
     pub fn getBallSize(self: *const Self) f32 {
@@ -224,9 +301,13 @@ const Config = struct {
 const State = struct {
     const Self = @This();
 
+    allocator: std.mem.Allocator,
+
     config: Config,
     /// List of renderable entities.
     entities: std.ArrayList(Entity),
+    /// List of renderable texts.
+    texts: std.ArrayList(Text),
     debug_mode: bool,
 
     // Pointers to important entities.
@@ -236,8 +317,10 @@ const State = struct {
     player1_score_area: *Entity,
     player2_score_area: *Entity,
 
-    player1_score: u8,
-    player2_score: u8,
+    player1_score: u32,
+    player1_score_text: []u8,
+    player2_score: u32,
+    player2_score_text: []u8,
     /// Next serve indicates in which direction the ball will move in the next
     /// round.
     /// Value will be either `1` or `-1`. When moving the ball the X velocity
@@ -245,25 +328,32 @@ const State = struct {
     /// The initial value is determined randomly.
     next_serve: f32,
 
-    pub fn init(allocator: std.mem.Allocator, config: Config) Self {
+    pub fn init(allocator: std.mem.Allocator, config: Config) !Self {
         const random_next_serve = std.math.sign(std.crypto.random.int(i8));
         return Self{
+            .allocator = allocator,
             .config = config,
             .entities = std.ArrayList(Entity).init(allocator),
-            .debug_mode = false,
+            .texts = std.ArrayList(Text).init(allocator),
+            .debug_mode = true,
             .paddle_player1 = undefined,
             .paddle_player2 = undefined,
             .ball = undefined,
             .player1_score_area = undefined,
             .player2_score_area = undefined,
             .player1_score = 0,
+            .player1_score_text = try allocator.alloc(u8, 64),
             .player2_score = 0,
+            .player2_score_text = try allocator.alloc(u8, 64),
             .next_serve = if (random_next_serve == 0) 1 else @floatFromInt(random_next_serve),
         };
     }
 
     pub fn deinit(self: *Self) void {
+        self.allocator.free(self.player1_score_text);
+        self.allocator.free(self.player2_score_text);
         self.entities.deinit();
+        self.texts.deinit();
     }
 
     pub fn addAndReturnEntity(self: *Self, entity: Entity) !*Entity {
@@ -278,15 +368,11 @@ const State = struct {
     pub fn scorePlayer1(self: *Self) void {
         self.player1_score += 1;
         self.next_serve = -1; // Initiate ball movemnt to left side next round.
-        // TODO: Remove, once proper display for scores is implemented.
-        std.debug.print("Updated score player 1: {d}\n", .{self.player1_score});
     }
 
     pub fn scorePlayer2(self: *Self) void {
         self.player2_score += 1;
         self.next_serve = 1; // Initiate ball movemnt to right side next round.
-        // TODO: Remove, once proper display for scores is implemented.
-        std.debug.print("Updated score player 2: {d}\n", .{self.player2_score});
     }
 };
 
@@ -300,6 +386,8 @@ const color = .{
 
 var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
 var batcher: delve.graphics.batcher.Batcher = undefined;
+var sprite_batcher: delve.graphics.batcher.SpriteBatcher = undefined;
+var shader: graphics.Shader = undefined;
 var state: State = undefined;
 
 pub fn main() !void {
@@ -332,7 +420,7 @@ pub fn main() !void {
     // All other values are dependent on the screen size, so they will be
     // calculated automatically according to the screen size.
     const scale = 2;
-    state = State.init(
+    state = try State.init(
         gpa.allocator(),
         .{
             .width = 1024 * scale,
@@ -343,7 +431,7 @@ pub fn main() !void {
             .paddle_height_percent = 20,
             .paddle_width_percent = 2.5,
             .wall_size = 20 * scale,
-            .score_wall_size = 60 * scale,
+            .score_board_size = 60 * scale,
         },
     );
 
@@ -362,6 +450,15 @@ fn init() !void {
         delve.debug.showErrorScreen("Fatal error during batch init!");
         return;
     };
+    sprite_batcher = delve.graphics.batcher.SpriteBatcher.init(.{}) catch {
+        delve.debug.showErrorScreen("Fatal error during sprite batch init!");
+        return;
+    };
+    // shader = graphics.Shader.initDefault(.{ .blend_mode = graphics.BlendMode.BLEND });
+    shader = graphics.Shader.initDefault(.{});
+    _ = try delve.fonts.loadFont("default", "assets/fonts/Mecha.ttf", 1024, 200);
+    _ = try delve.fonts.loadFont("default_bold", "assets/fonts/Mecha_Bold.ttf", 1024, 200);
+
     delve.platform.graphics.setClearColor(color.background);
 
     const config = state.config;
@@ -369,13 +466,13 @@ fn init() !void {
     const height = state.config.getHeight();
 
     // Add arena entites.
-    // Floor
+    // Top score board
     try state.addEntity(Entity.initStatic(
-        spatial.Rect.fromSize(math.Vec2.new(width, config.wall_size))
-            .setPosition(.{ .x = width / 2, .y = config.wall_size / 2 }),
+        spatial.Rect.fromSize(math.Vec2.new(width, config.score_board_size))
+            .setPosition(.{ .x = width / 2, .y = config.score_board_size / 2 }),
         color.primary,
     ));
-    // Ceiling
+    // Bottom
     try state.addEntity(Entity.initStatic(
         spatial.Rect.fromSize(math.Vec2.new(width, config.wall_size))
             .setPosition(.{ .x = width / 2, .y = height - config.wall_size / 2 }),
@@ -383,14 +480,20 @@ fn init() !void {
     ));
     // Left wall
     state.player2_score_area = try state.addAndReturnEntity(Entity.initStatic(
-        spatial.Rect.fromSize(math.Vec2.new(config.score_wall_size, height))
-            .setPosition(.{ .x = config.score_wall_size / 2, .y = height / 2 }),
+        spatial.Rect.fromSize(math.Vec2.new(config.wall_size, height))
+            .setPosition(.{ .x = config.wall_size / 2, .y = height / 2 }),
         color.primary,
     ));
     // Right wall
     state.player1_score_area = try state.addAndReturnEntity(Entity.initStatic(
-        spatial.Rect.fromSize(math.Vec2.new(config.score_wall_size, height))
-            .setPosition(.{ .x = width - config.score_wall_size / 2, .y = height / 2 }),
+        spatial.Rect.fromSize(math.Vec2.new(config.wall_size, height))
+            .setPosition(.{ .x = width - config.wall_size / 2, .y = height / 2 }),
+        color.primary,
+    ));
+    // Field line
+    try state.addEntity(Entity.initVisual(
+        spatial.Rect.fromSize(math.Vec2.new(10, height))
+            .setPosition(.{ .x = width / 2 - 5, .y = 0 }),
         color.primary,
     ));
 
@@ -398,7 +501,7 @@ fn init() !void {
     const player1_paddle = try state.addAndReturnEntity(Entity.initDynamic(
         spatial.Rect.fromSize(math.Vec2.new(config.getPaddleWidth(), config.getPaddleHeight()))
             .setPosition(.{
-            .x = config.score_wall_size + config.getPaddleWidth() / 2,
+            .x = config.wall_size + config.getPaddleWidth() / 2,
             .y = height / 2,
         }),
         color.player1,
@@ -413,7 +516,7 @@ fn init() !void {
     const player2_paddle = try state.addAndReturnEntity(Entity.initDynamic(
         spatial.Rect.fromSize(math.Vec2.new(config.getPaddleWidth(), config.getPaddleHeight()))
             .setPosition(.{
-            .x = width - config.score_wall_size - config.getPaddleWidth() / 2,
+            .x = width - config.wall_size - config.getPaddleWidth() / 2,
             .y = height / 2,
         }),
         color.player2,
@@ -443,9 +546,45 @@ fn init() !void {
     physics.zb.b2Shape_SetRestitution(ball.physics_body.shape, 1);
     ball.stop();
     state.ball = ball;
+
+    // Add scoreboard text.
+    {
+        const font_size = 64;
+        const text_width = font_size / 2 * 2;
+        const pos_y = 0;
+        const offset = 180;
+
+        try state.texts.append(try Text.initDynamic(
+            player1ScoreText,
+            math.Vec2.new(state.config.getWidth() / 2 - text_width - offset, pos_y),
+            font_size,
+            color.player1,
+            "default_bold",
+        ));
+
+        try state.texts.append(try Text.initDynamic(
+            player2ScoreText,
+            math.Vec2.new(state.config.getWidth() / 2 + offset, pos_y),
+            font_size,
+            color.player2,
+            "default_bold",
+        ));
+    }
+}
+
+fn player1ScoreText() ![]const u8 {
+    _ = try std.fmt.bufPrint(state.player1_score_text, "{d:0>2}", .{state.player1_score});
+    return state.player1_score_text;
+}
+
+fn player2ScoreText() ![]const u8 {
+    _ = try std.fmt.bufPrint(state.player2_score_text, "{d:0>2}", .{state.player2_score});
+    return state.player2_score_text;
 }
 
 fn cleanup() !void {
+    shader.destroy();
+    sprite_batcher.deinit();
     batcher.deinit();
 }
 
@@ -498,8 +637,22 @@ fn tick(_: f32) void {
 
 fn draw() void {
     const texture_region = delve.graphics.sprites.TextureRegion.default();
+    // Setup view and projection for a 2D environment.
+    const view = math.Mat4.lookat(
+        .{ .x = 0, .y = 0, .z = 1 },
+        math.Vec3.zero,
+        math.Vec3.up,
+    );
+    const projection = graphics.getProjectionOrtho(-1, 1, true);
+    const camera = delve.platform.graphics.CameraMatrices{ .view = view, .proj = projection };
+    const camera_fonts = delve.platform.graphics.CameraMatrices{
+        .view = view,
+        .proj = graphics.getProjectionOrtho(-1, 1, false),
+    };
 
     batcher.reset();
+    sprite_batcher.reset();
+    sprite_batcher.useShader(shader);
 
     // Add entities to be rendered.
     for (state.entities.items) |entity| {
@@ -518,25 +671,39 @@ fn draw() void {
         }
     }
 
-    // Render debug information.
+    // Render debug information for entities and texts.
     if (state.debug_mode) {
         for (state.entities.items) |entity| {
             batcher.addCircle(entity.getRect().getPosition(), 4, 12, texture_region, delve.colors.red);
         }
+        for (state.texts.items) |text| {
+            batcher.addCircle(text.pos, 4, 12, texture_region, delve.colors.blue);
+            // sprite_batcher.addRectangle(spatial.Rect.fromSize(.{ .x = 10, .y = 10 }).setPosition(text.pos), texture_region, delve.colors.blue);
+        }
+    }
+
+    for (state.texts.items) |text| {
+        const font_size = @as(f32, @floatFromInt(text.size));
+        const scale: f32 = font_size / text.font.font_size;
+        var x_pos: f32 = text.pos.x / scale;
+        // TODO: Weird gymnastics that I need to do, because the Y-axis of
+        // `camera_fonts` projection is not flipped.
+        var y_pos: f32 = (-state.config.getHeight() + text.pos.y + font_size) / scale;
+        delve.fonts.addStringToSpriteBatch(
+            text.font,
+            &sprite_batcher,
+            text.getText(),
+            &x_pos,
+            &y_pos,
+            scale,
+            text.color,
+        );
     }
 
     batcher.apply();
-
-    // Setup view and projection for a 2D environment.
-    const view = math.Mat4.lookat(
-        .{ .x = 0, .y = 0, .z = 1 },
-        math.Vec3.zero,
-        math.Vec3.up,
-    );
-    const projection = graphics.getProjectionOrtho(-1, 1, true);
-
-    // Draw batch.
-    batcher.draw(.{ .view = view, .proj = projection }, math.Mat4.identity);
+    batcher.draw(camera, math.Mat4.identity);
+    sprite_batcher.apply();
+    sprite_batcher.draw(camera_fonts, math.Mat4.identity);
 }
 
 fn reset() void {
@@ -549,12 +716,12 @@ fn reset() void {
     // Stop players and reset their position.
     state.paddle_player1.stop();
     state.paddle_player1.place(.{
-        .x = state.config.score_wall_size + state.config.getPaddleWidth() / 2,
+        .x = state.config.wall_size + state.config.getPaddleWidth() / 2,
         .y = state.config.getHeight() / 2,
     });
     state.paddle_player2.stop();
     state.paddle_player2.place(.{
-        .x = state.config.getWidth() - state.config.score_wall_size - state.config.getPaddleWidth() / 2,
+        .x = state.config.getWidth() - state.config.wall_size - state.config.getPaddleWidth() / 2,
         .y = state.config.getHeight() / 2,
     });
 }
@@ -583,13 +750,8 @@ fn updateScore() void {
                 state.scorePlayer2();
                 reset();
             }
-            // Initiate Y velocity on ball, when ball collides with a paddle the
-            // first time.
-            else if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.paddle_player1.physics_body.shape) or
-                physics.zb.B2_ID_EQUALS(event.shapeIdB, state.paddle_player1.physics_body.shape) or
-                physics.zb.B2_ID_EQUALS(event.shapeIdA, state.paddle_player2.physics_body.shape) or
-                physics.zb.B2_ID_EQUALS(event.shapeIdB, state.paddle_player2.physics_body.shape))
-            {
+            // Initiate Y velocity on ball, when ball collides the first time.
+            else {
                 const vel = state.ball.getVelocity();
                 if (vel.y == 0) {
                     var paddle = event.shapeIdA;
