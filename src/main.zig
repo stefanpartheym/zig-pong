@@ -582,25 +582,23 @@ fn updateScore() void {
 /// Currently, the AI is too good; there is no way to beat it.
 /// Find a way to make it less perfect. Maybe introduce some randomness.
 fn updateEnemyPaddle() void {
+    // Ball: Add half sizes to position to get center point.
     const ball_rect = state.ball.getRect();
     const ball_pos = ball_rect.getPosition().add(ball_rect.getSize().scale(0.5));
 
+    // Paddle: Add half sizes to position to get center point.
     const paddle_rect = state.paddle_player2.getRect();
-    const hh = paddle_rect.height / 2;
     const paddle_pos = paddle_rect.getPosition().add(paddle_rect.getSize().scale(0.5));
-    const paddle_speed = state.config.getPaddleSpeed();
 
     const delta = paddle_pos.sub(ball_pos);
-    // Time to collide (on X axis).
-    const ttc = delta.x / state.config.getBallSpeed();
-    // const threshold = hh * state.config.paddle_speed / 100;
-
-    const normalized_speed = @min(paddle_speed, @abs(delta.y) / ttc);
+    const ttc = delta.x / state.config.getBallSpeed(); // ttc = Time To Collide (on X axis).
+    const threshold = paddle_rect.height / 2 * ttc;
+    const normalized_speed = @min(state.config.getPaddleSpeed(), @abs(delta.y) / ttc);
 
     if (state.ball.getVelocity().x > 0 and ttc < 1) {
-        if (ball_pos.y > paddle_pos.y + hh * ttc) {
+        if (ball_pos.y > paddle_pos.y + threshold) {
             state.paddle_player2.move(.{ .x = 0, .y = normalized_speed });
-        } else if (ball_pos.y < paddle_pos.y - hh * ttc) {
+        } else if (ball_pos.y < paddle_pos.y - threshold) {
             state.paddle_player2.move(.{ .x = 0, .y = -normalized_speed });
         }
     }
