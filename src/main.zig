@@ -749,22 +749,26 @@ fn updateScore() void {
             {
                 state.scorePlayer2();
                 reset();
-            }
-            // Initiate Y velocity on ball, when ball collides the first time.
-            else {
+            } else {
                 const vel = state.ball.getVelocity();
+                var paddle = event.shapeIdA;
+                if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.ball.physics_body.shape)) {
+                    paddle = event.shapeIdB;
+                }
+                const paddle_vel = physics.zb.b2Body_GetLinearVelocity(physics.zb.b2Shape_GetBody(paddle));
+
+                // Initiate Y velocity on ball, when ball collides the first time.
                 if (vel.y == 0) {
-                    var paddle = event.shapeIdA;
-                    if (physics.zb.B2_ID_EQUALS(event.shapeIdA, state.ball.physics_body.shape)) {
-                        paddle = event.shapeIdB;
-                    }
-                    const paddle_vel = physics.zb.b2Body_GetLinearVelocity(physics.zb.b2Shape_GetBody(paddle));
                     var factor = std.math.sign(paddle_vel.y);
                     if (paddle_vel.y == 0) {
                         factor = @floatFromInt(std.math.sign(std.crypto.random.int(i8)));
                     }
 
                     state.ball.move(.{ .x = vel.x, .y = state.config.ball_speed * factor });
+                }
+                // Make paddle velocity influence the ball velocity.
+                else if (paddle_vel.y != 0 and std.math.sign(vel.y) != std.math.sign(paddle_vel.y)) {
+                    state.ball.move(.{ .x = vel.x, .y = vel.y * -1 });
                 }
             }
         }
